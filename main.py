@@ -1,5 +1,5 @@
 import argparse
-from crawler.collector import *
+from crawler.collector import MatchCrawler
 
 def arg_parser():
     parser = argparse.ArgumentParser(description="Collecting Team Info from web...")
@@ -15,3 +15,4 @@ if __name__ == "__main__":
     parser = arg_parser()
     args = parser.parse_args()
     print(args.url)
+    crawl = MatchCrawler(args.url)
