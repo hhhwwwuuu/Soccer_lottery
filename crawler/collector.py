@@ -14,6 +14,7 @@ import os
 import logging
 from collections import defaultdict
 import pandas as pd
+from bs4 import BeautifulSoup
 
 logging.basicConfig(level=logging.INFO)
 
@@ -60,19 +61,29 @@ class MatchCrawler:
         self.result = defaultdict()
         self.league = None
         self.date = None
+        self.table_header = ['company', 'league', 'home', 'score', 'guest', 'asia_home', 'asia_handicap', 'asia_guest',
+                             'euro_home', 'euro_draw', 'euro_guest', 'final_Kaisa_home', 'final_aisa_handicap',
+                             'final_Kaisa_guest', 'final_euro_home', 'final_euro_draw', 'final_euro_guest']
+        self.table_data = defaultdict(list)
         logging.info("Crawling data from {}".format(url))
         ignored_exceptions = (NoSuchElementException, StaleElementReferenceException,)
         self.driver = webdriver.Chrome(chromedriver, options=options)
         wait = WebDriverWait(self.driver, 10, ignored_exceptions=ignored_exceptions)
         self.__open_browser()
-        self.get_last_season_data()
-        # self.home, self.h_rank, self.guest, self.g_rank = self.get_team_names()
-        # self.league, self.date = self.get_date()
-        # print(self.result)
-        # self.save_file = '_'.join([self.date.split()[0], self.home, self.guest]) + '.json'
-        # self.get_credit_status()
-        # # self.get_history_battle()
-        # self.save_record()
+
+        """
+        获取上赛季记录
+        """
+        #self.get_last_season_data()
+
+
+        self.home, self.h_rank, self.guest, self.g_rank = self.get_team_names()
+        self.league, self.date = self.get_date()
+
+        self.save_file = '_'.join([self.date.split()[0], self.home, self.guest]) + '.json'
+        self.get_credit_status()
+        self.get_history_battle()
+        self.save_record()
 
     def get_last_season_data(self):
         self.driver.get(self.league_url)
@@ -103,7 +114,8 @@ class MatchCrawler:
         last_standings.to_csv(os.path.join('data', '_'.join([year, league_name]) + '.csv'), index=False, encoding='utf-8-sig')
         logging.info(f"{year} {league_name} has been download!")
         data = pd.read_csv(os.path.join('data', '_'.join([year, league_name]) + '.csv'), encoding='utf-8')
-        print(data.head(5))
+        #print(data.head(5))
+        logging.info(f"{league_name} standings has been collected!")
 
 
     def __open_browser(self):
@@ -133,9 +145,9 @@ class MatchCrawler:
         home_standing = self.driver.find_element_by_xpath("//div[@class='bd same']//table").text.splitlines()
         guest_standing = self.driver.find_element_by_xpath("//div[@class='bd same ml6']//table").text.splitlines()
         items = ['matched', 'win', 'draw', 'loss', 'gain_scores', 'lost_scores', 'balance', 'credits', 'rank', 'win_rate']
-        self.result['standings'] = {}
-        self.result['standings']['home'] = {}
-        self.result['standings']['guest'] = {}
+        self.result['league_standing'] = {}
+        self.result['league_standing']['home'] = {}
+        self.result['league_standing']['guest'] = {}
         for i in range(len(home_standing)):
             # ignore header
             if i == 0:
@@ -147,15 +159,14 @@ class MatchCrawler:
             title = ['all', 'as_home', 'as_guest']
             h_tmp = home_standing[i].split()
             g_tmp = guest_standing[i].split()
-            self.result['standings']['home'][title[i - 1]] = {}
-            self.result['standings']['guest'][title[i - 1]] = {}
+            self.result['league_standing']['home'][title[i - 1]] = {}
+            self.result['league_standing']['guest'][title[i - 1]] = {}
             for pos in range(len(h_tmp)):
                 if pos == 0:
                     continue
 
-                self.result['standings']['home'][title[i - 1]][items[pos - 1]] = h_tmp[pos]
-                self.result['standings']['guest'][title[i - 1]][items[pos - 1]] = g_tmp[pos]
-        print(self.result)
+                self.result['league_standing']['home'][title[i - 1]][items[pos - 1]] = h_tmp[pos]
+                self.result['league_standing']['guest'][title[i - 1]][items[pos - 1]] = g_tmp[pos]
 
 
 
@@ -174,17 +185,71 @@ class MatchCrawler:
         :return:
         """
         # default
-        print(self.driver.find_element_by_xpath(
-            "//div[@class='porlet' and @id='porlet_3']//table[@class='odds-table']").text)
+        history_match = self.driver.find_element_by_xpath(
+            "//div[@class='porlet' and @id='porlet_3']//table[@class='odds-table']")
+
+        #print(self.driver.page_source)
+        self.__save_table(history_match)
 
         print("+++++++++++++++++++++++++++++")
-        # 同主客
-        self.driver.find_elements_by_xpath("//div[@class='porlet' and @id='porlet_3']//div[@class='conditions']/label")[
-            0].click()
-        print(self.driver.find_element_by_xpath(
-            "//div[@class='porlet' and @id='porlet_3']//table[@class='odds-table']").text)
+        # # 同主客
+        # self.driver.find_elements_by_xpath("//div[@class='porlet' and @id='porlet_3']//div[@class='conditions']/label")[
+        #     0].click()
+        # print(self.driver.find_element_by_xpath(
+        #     "//div[@class='porlet' and @id='porlet_3']//table[@class='odds-table']").text)
         # 同赛事
         # 同主客，同赛事
+
+    def __save_table(self, table):
+        # TODO: 将函数泛化，可以捕捉table的id 抓取所有
+        # print(table.text)
+        soup = BeautifulSoup(self.driver.page_source, 'html.parser')
+
+        frame = soup.find_all("div", class_="porlet", id="porlet_3")[0]
+
+        company_list = frame.find("tr").find("div", class_="analysis-menu").get_text().split()
+        cur_company = frame.find("tr").find("span", "title").get_text()
+        self.select_company(cur_company, 3)
+        # 遍历table中每一行data
+        for tr in frame.find_all("tr")[2:]:
+            #print(td.prettify())
+
+            league_name = tr.find("a").get_text()
+            print(league_name)
+            date = tr.find_all("td", limit=2)[1].get_text()
+            print(date)
+            print(cur_company)
+            print()
+            # 遍历某一行中所有cells
+            for item in tr.find_all("span")[:-4]:
+                # 删除表单中角球的数据
+                #print(item.attrs)
+                if 'class' in item.attrs:
+                    if item['class'][0] in ["icon-corner", "num-corner"]:
+                        continue
+                print(item.get_text())
+
+            cur_status = frame.find("tr").find_all("span", "title", limit=2)[1].get_text()
+            print(cur_status)
+            # self.driver.find_element_by_xpath()
+            print("+++++++++++++++")
+
+    def select_status(self, cur_status, table):
+        # TODO: 对亚培和欧赔都进行切换
+        pass
+
+    def select_company(self, cur_company, table):
+        """
+        选择公司
+        :param cur_company:
+        :return:
+        """
+        # TODO: 对亚培，欧赔都进行公司切换
+        for span in self.driver.find_elements_by_xpath(
+            f"//div[@class='porlet' and @id='porlet_{table}']//table[@class='odds-table']//td[@class='w4'][2]//div["
+            "@class='analysis-menu-row']//span"):
+            if span.text == cur_company:
+                span.click()
 
     def check_exist(self):
         if os.path.exists(os.path.join('data', 'single', self.save_file)):
